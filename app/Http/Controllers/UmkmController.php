@@ -9,6 +9,7 @@ use App\Models\Product;
 use App\Models\Umkm;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Storage;
 
 class UmkmController extends Controller
 {
@@ -138,8 +139,12 @@ class UmkmController extends Controller
         ]);
 
         if ($req->hasFile('image')) {
+            $oldImage = $product->image;
             $path = $req->file('image')->store('products', 'public');
             $validated['image'] = $path;
+            if ($oldImage && ! filter_var($oldImage, FILTER_VALIDATE_URL)) {
+                Storage::disk('public')->delete($oldImage);
+            }
         }
 
         $product->update($validated);

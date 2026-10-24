@@ -45,6 +45,23 @@ class CartController extends Controller
         return redirect()->route('cart.index')->with('success', 'Produk ditambahkan ke keranjang.');
     }
 
+    public function buyNow(Request $req, $productId)
+    {
+        $product = Product::where('status', 'active')->findOrFail($productId);
+        $qty = (int) $req->input('quantity', 1);
+
+        if ($qty < 1) {
+            return back()->with('error', 'Jumlah minimal 1.');
+        }
+        if ($product->stock < $qty) {
+            return back()->with('error', 'Stok tidak mencukupi.');
+        }
+
+        session(['buy_now' => ['product_id' => $product->id, 'quantity' => $qty]]);
+
+        return redirect()->route('checkout');
+    }
+
     public function update(Request $req, $id)
     {
         $cart = Cart::with('product')->where('user_id', Auth::id())->findOrFail($id);

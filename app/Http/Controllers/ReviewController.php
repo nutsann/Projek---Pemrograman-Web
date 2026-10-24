@@ -13,6 +13,9 @@ class ReviewController extends Controller
     public function create($orderId)
     {
         $order = Order::with('items.product')->where('user_id', Auth::id())->findOrFail($orderId);
+        if ($order->status !== 'completed') {
+            return redirect()->route('orders.show', $orderId)->with('error', 'Review hanya dapat dibuat setelah pesanan selesai.');
+        }
 
         return view('reviews.create', compact('order'));
     }
@@ -20,6 +23,9 @@ class ReviewController extends Controller
     public function store(Request $req, $orderId)
     {
         $order = Order::with('items')->where('user_id', Auth::id())->findOrFail($orderId);
+        if ($order->status !== 'completed') {
+            return back()->with('error', 'Review hanya dapat dikirim setelah pesanan selesai.');
+        }
         $validated = $req->validate([
             'product_id' => 'required|exists:products,id',
             'rating' => 'required|integer|min:1|max:5',
@@ -29,18 +35,17 @@ class ReviewController extends Controller
         if (! $order->items->contains('product_id', $validated['product_id'])) {
             return back()->with('error', 'Produk tidak termasuk dalam pesanan ini.');
         }
+        if (Review::where('user_id', Auth::id())->where('product_id', $validated['product_id'])->where('order_id', $orderId)->exists()) {
+            return back()->with('error', 'Anda sudah memberikan review untuk produk ini pada pesanan tersebut.');
+        }
 
-        Review::updateOrCreate(
-            [
-                'user_id' => Auth::id(),
-                'product_id' => $validated['product_id'],
-                'order_id' => $orderId,
-            ],
-            [
-                'rating' => $validated['rating'],
-                'comment' => $validated['comment'] ?? null,
-            ]
-        );
+        Review::create([
+            'user_id' => Auth::id(),
+            'product_id' => $validated['product_id'],
+            'order_id' => $orderId,
+            'rating' => $validated['rating'],
+            'comment' => $validated['comment'] ?? null,
+        ]);
 
         return redirect()->route('orders.show', $orderId)->with('success', 'Review berhasil dikirim.');
     }

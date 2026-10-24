@@ -7,10 +7,14 @@ use App\Models\Culture;
 use App\Models\EventModel;
 use App\Models\Order;
 use App\Models\Product;
+use App\Models\Review;
 use App\Models\Tourism;
 use App\Models\Umkm;
 use App\Models\User;
+use App\Notifications\OrderNotification;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 
 class AdminController extends Controller
 {
@@ -27,6 +31,11 @@ class AdminController extends Controller
             'total_sales' => Order::where('status', 'completed')->sum('total'),
             'pending_orders' => Order::where('status', 'pending')->count(),
             'pending_umkms' => Umkm::where('status', 'pending')->count(),
+            'unpaid_orders' => Order::where('payment_status', 'unpaid')->count(),
+            'verification_orders' => Order::where('payment_status', 'waiting_verification')->count(),
+            'paid_orders' => Order::where('payment_status', 'paid')->count(),
+            'failed_payments' => Order::where('payment_status', 'failed')->count(),
+            'paid_revenue' => Order::where('payment_status', 'paid')->sum('total'),
         ];
 
         $recent_orders = Order::with('user', 'items')->latest()->limit(10)->get();
@@ -66,20 +75,74 @@ class AdminController extends Controller
         return view('admin.users', compact('users'));
     }
 
-    public function orders()
+    public function orders(Request $req)
     {
-        $orders = Order::with('user', 'items')->latest()->paginate(10);
+        $validated = $req->validate([
+            'payment_status' => 'nullable|in:unpaid,waiting_verification,paid,failed',
+        ]);
+        $query = Order::with('user', 'items')->latest();
+
+        if (! empty($validated['payment_status'])) {
+            $query->where('payment_status', $validated['payment_status']);
+        }
+
+        $orders = $query->paginate(10)->withQueryString();
 
         return view('admin.orders', compact('orders'));
     }
 
+    public function orderShow($id)
+    {
+        $order = Order::with(['user', 'items.product', 'items.umkm'])->findOrFail($id);
+
+        return view('admin.order-show', compact('order'));
+    }
+
+    public function reviews()
+    {
+        $reviews = Review::with(['user', 'product'])->latest()->paginate(15);
+
+        return view('admin.reviews', compact('reviews'));
+    }
+
     public function orderStatusUpdate(Request $req, $id)
     {
-        $order = Order::findOrFail($id);
         $validated = $req->validate(['status' => 'required|in:pending,processing,completed,cancelled']);
-        $order->update(['status' => $validated['status']]);
+
+        try {
+            DB::transaction(function () use ($id, $validated) {
+            $order = Order::with('items')->lockForUpdate()->findOrFail($id);
+
+            if (in_array($validated['status'], ['processing', 'completed'], true) && $order->payment_status !== 'paid') {
+                throw new \RuntimeException('Pesanan hanya bisa diproses setelah pembayaran lunas.');
+            }
+
+            $wasCancelled = $order->status === 'cancelled';
+            $willCancel = $validated['status'] === 'cancelled';
+
+            if (! $wasCancelled && $willCancel) {
+                foreach ($order->items as $item) {
+                    $item->product()->lockForUpdate()->first()?->increment('stock', $item->quantity);
+                }
+            }
+
+                $order->update(['status' => $validated['status']]);
+            });
+        } catch (\RuntimeException $e) {
+            return back()->with('error', $e->getMessage());
+        }
 
         return back()->with('success', 'Status pesanan diperbarui.');
+    }
+
+    public function paymentStatusUpdate(Request $req, $id)
+    {
+        $order = Order::findOrFail($id);
+        $validated = $req->validate(['payment_status' => 'required|in:unpaid,waiting_verification,paid,failed']);
+        $order->update(['payment_status' => $validated['payment_status']]);
+        $order->user->notify(new OrderNotification($order, 'Status pembayaran diperbarui menjadi '.Order::paymentStatusLabel($order->payment_status).'.'));
+
+        return back()->with('success', 'Status pembayaran diperbarui.');
     }
 
     // ========== CULTURE CRUD ==========
@@ -149,8 +212,10 @@ class AdminController extends Controller
         ]);
 
         if ($req->hasFile('image')) {
+            $oldImage = $culture->image;
             $path = $req->file('image')->store('cultures', 'public');
             $validated['image'] = $path;
+            if ($oldImage && ! filter_var($oldImage, FILTER_VALIDATE_URL)) Storage::disk('public')->delete($oldImage);
         }
         $validated['is_featured'] = $req->boolean('is_featured');
         $culture->update($validated);
@@ -236,8 +301,10 @@ class AdminController extends Controller
         ]);
 
         if ($req->hasFile('image')) {
+            $oldImage = $tourism->image;
             $path = $req->file('image')->store('tourisms', 'public');
             $validated['image'] = $path;
+            if ($oldImage && ! filter_var($oldImage, FILTER_VALIDATE_URL)) Storage::disk('public')->delete($oldImage);
         }
         $validated['is_featured'] = $req->boolean('is_featured');
         $tourism->update($validated);
@@ -318,8 +385,10 @@ class AdminController extends Controller
         ]);
 
         if ($req->hasFile('image')) {
+            $oldImage = $event->image;
             $path = $req->file('image')->store('events', 'public');
             $validated['image'] = $path;
+            if ($oldImage && ! filter_var($oldImage, FILTER_VALIDATE_URL)) Storage::disk('public')->delete($oldImage);
         }
         $validated['is_registration_open'] = $req->boolean('is_registration_open');
         $event->update($validated);

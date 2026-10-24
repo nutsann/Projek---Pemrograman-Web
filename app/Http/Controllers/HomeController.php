@@ -12,6 +12,39 @@ use Illuminate\Http\Request;
 
 class HomeController extends Controller
 {
+    public function quickSearch(Request $request)
+    {
+        $query = trim((string) $request->input('q', ''));
+        $like = '%'.$query.'%';
+
+        if ($query === '') {
+            $cultures = Culture::where('is_featured', true)->latest()->limit(3)->get();
+            $tourisms = Tourism::where('is_featured', true)->latest()->limit(3)->get();
+            $products = Product::where('is_featured', true)->where('status', 'active')->latest()->limit(3)->get();
+            $events = EventModel::where('status', '!=', 'completed')->orderBy('start_date')->limit(3)->get();
+        } else {
+            $cultures = Culture::where(function ($q) use ($like) {
+                $q->where('name', 'like', $like)->orWhere('short_description', 'like', $like);
+            })->limit(5)->get();
+            $tourisms = Tourism::where(function ($q) use ($like) {
+                $q->where('name', 'like', $like)->orWhere('short_description', 'like', $like)->orWhere('location', 'like', $like);
+            })->limit(5)->get();
+            $products = Product::where('status', 'active')->where(function ($q) use ($like) {
+                $q->where('name', 'like', $like)->orWhere('description', 'like', $like);
+            })->limit(5)->get();
+            $events = EventModel::where(function ($q) use ($like) {
+                $q->where('name', 'like', $like)->orWhere('description', 'like', $like)->orWhere('location', 'like', $like);
+            })->limit(5)->get();
+        }
+
+        return response()->json([
+            'cultures' => $cultures->map(fn ($item) => ['name' => $item->name, 'url' => route('cultures.detail', $item->slug), 'image' => $item->image]),
+            'tourisms' => $tourisms->map(fn ($item) => ['name' => $item->name, 'url' => route('tourisms.detail', $item->slug), 'image' => $item->image]),
+            'products' => $products->map(fn ($item) => ['name' => $item->name, 'url' => route('products.detail', $item->slug), 'image' => $item->image, 'price' => 'Rp '.number_format($item->price, 0, ',', '.')]),
+            'events' => $events->map(fn ($item) => ['name' => $item->name, 'url' => route('events.detail', $item->slug), 'image' => $item->image]),
+        ]);
+    }
+
     public function index()
     {
         return view('home.index', [
@@ -25,7 +58,7 @@ class HomeController extends Controller
 
     public function cultures(Request $request)
     {
-        $query = Culture::query();
+        $query = Culture::with('category');
 
         if ($request->filled('search')) {
             $search = $request->string('search');
@@ -35,6 +68,11 @@ class HomeController extends Controller
                     ->orWhere('description', 'like', "%{$search}%")
                     ->orWhere('location', 'like', "%{$search}%");
             });
+        }
+
+        if ($request->filled('category') && $request->category !== 'semua') {
+            $cat = $request->category;
+            $query->whereHas('category', fn ($q) => $q->where('slug', $cat)->orWhere('name', 'like', "%{$cat}%"));
         }
 
         $query->orderByDesc('is_featured')
@@ -51,7 +89,7 @@ class HomeController extends Controller
 
     public function tourisms(Request $request)
     {
-        $query = Tourism::query();
+        $query = Tourism::with('category');
 
         if ($request->filled('search')) {
             $search = $request->string('search');
@@ -60,6 +98,15 @@ class HomeController extends Controller
                     ->orWhere('short_description', 'like', "%{$search}%")
                     ->orWhere('description', 'like', "%{$search}%")
                     ->orWhere('location', 'like', "%{$search}%");
+            });
+        }
+
+        if ($request->filled('category') && $request->category !== 'semua') {
+            $cat = $request->category;
+            $query->where(function ($q) use ($cat) {
+                $q->whereHas('category', fn ($c) => $c->where('slug', $cat)->orWhere('name', 'like', "%{$cat}%"))
+                  ->orWhere('name', 'like', "%{$cat}%")
+                  ->orWhere('short_description', 'like', "%{$cat}%");
             });
         }
 
@@ -73,9 +120,30 @@ class HomeController extends Controller
         return view('tourisms.detail', ['tourism' => Tourism::where('slug', $slug)->firstOrFail()]);
     }
 
-    public function events()
+    public function events(Request $request)
     {
-        return view('events.index', ['events' => EventModel::paginate(12)]);
+        $query = EventModel::query();
+
+        if ($request->filled('search')) {
+            $search = $request->string('search');
+            $query->where(function ($builder) use ($search) {
+                $builder->where('name', 'like', "%{$search}%")
+                    ->orWhere('description', 'like', "%{$search}%")
+                    ->orWhere('location', 'like', "%{$search}%");
+            });
+        }
+
+        if ($request->filled('category') && $request->category !== 'semua') {
+            $cat = $request->category;
+            $query->where(function ($builder) use ($cat) {
+                $builder->where('name', 'like', "%{$cat}%")
+                    ->orWhere('description', 'like', "%{$cat}%");
+            });
+        }
+
+        $query->orderBy('start_date');
+
+        return view('events.index', ['events' => $query->paginate(12)->withQueryString()]);
     }
 
     public function eventDetail($slug)

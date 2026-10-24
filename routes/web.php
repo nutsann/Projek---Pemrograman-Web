@@ -11,6 +11,7 @@ use App\Http\Controllers\ReviewController;
 use App\Http\Controllers\UmkmController;
 use Illuminate\Support\Facades\Route;
 
+Route::get('/quick-search', [HomeController::class, 'quickSearch'])->name('quick-search');
 Route::get('/', [HomeController::class, 'index'])->name('home');
 Route::get('/cultures', [HomeController::class, 'cultures'])->name('cultures');
 Route::get('/cultures/{slug}', [HomeController::class, 'cultureDetail'])->name('cultures.detail');
@@ -27,10 +28,15 @@ Route::get('/register', [AuthController::class, 'showRegister'])->name('register
 Route::post('/register', [AuthController::class, 'register'])->name('register.post');
 Route::get('/login', [AuthController::class, 'showLogin'])->name('login');
 Route::post('/login', [AuthController::class, 'login'])->name('login.post');
+Route::get('/forgot-password', [AuthController::class, 'showForgotPassword'])->name('password.request');
+Route::post('/forgot-password', [AuthController::class, 'sendResetLink'])->name('password.email');
+Route::get('/reset-password/{token}', [AuthController::class, 'showResetPassword'])->name('password.reset');
+Route::post('/reset-password', [AuthController::class, 'resetPassword'])->name('password.update');
 Route::post('/logout', [AuthController::class, 'logout'])->name('logout')->middleware('auth');
 Route::middleware('auth')->group(function () {
     Route::get('/cart', [CartController::class, 'index'])->name('cart.index');
     Route::post('/cart/add/{productId}', [CartController::class, 'add'])->name('cart.add');
+    Route::post('/buy-now/{productId}', [CartController::class, 'buyNow'])->name('buy-now');
     Route::put('/cart/update/{id}', [CartController::class, 'update'])->name('cart.update');
     Route::delete('/cart/remove/{id}', [CartController::class, 'remove'])->name('cart.remove');
 
@@ -41,6 +47,7 @@ Route::middleware('auth')->group(function () {
     Route::get('/orders/history', [OrderController::class, 'orderHistory'])->name('order.history');
 
     Route::get('/profile', [ProfileController::class, 'index'])->name('profile');
+    Route::get('/notifications', [ProfileController::class, 'notifications'])->name('notifications');
     Route::put('/profile', [ProfileController::class, 'update'])->name('profile.update');
     Route::put('/profile/password', [ProfileController::class, 'updatePassword'])->name('profile.password');
     Route::get('/events/registrations', [EventController::class, 'registrations'])->name('events.registrations');
@@ -51,6 +58,9 @@ Route::middleware('auth')->group(function () {
 
     Route::get('/orders', [OrderController::class, 'index'])->name('orders.index');
     Route::get('/orders/{id}', [OrderController::class, 'show'])->name('orders.show');
+    Route::post('/orders/{id}/pay', [OrderController::class, 'pay'])->name('orders.pay');
+    Route::post('/orders/{id}/payment-proof', [OrderController::class, 'uploadPaymentProof'])->name('orders.payment-proof');
+    Route::put('/orders/{id}/cancel', [OrderController::class, 'cancel'])->name('orders.cancel');
 });
 
 Route::middleware(['auth', 'role:seller'])->prefix('umkm')->group(function () {
@@ -73,8 +83,11 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
     Route::put('/umkms/{id}/approve', [AdminController::class, 'umkmApprove'])->name('admin.umkm.approve');
     Route::put('/umkms/{id}/reject', [AdminController::class, 'umkmReject'])->name('admin.umkm.reject');
     Route::get('/users', [AdminController::class, 'users'])->name('admin.users');
-    Route::get('/orders', [AdminController::class, 'orders'])->name('admin.orders');
+     Route::get('/orders', [AdminController::class, 'orders'])->name('admin.orders');
+     Route::get('/orders/{id}', [AdminController::class, 'orderShow'])->name('admin.order.show');
+    Route::get('/reviews', [AdminController::class, 'reviews'])->name('admin.reviews');
     Route::put('/orders/{id}/status', [AdminController::class, 'orderStatusUpdate'])->name('admin.order.status');
+    Route::put('/orders/{id}/payment-status', [AdminController::class, 'paymentStatusUpdate'])->name('admin.order.payment-status');
 
     // Admin CRUD for Culture
     Route::get('/cultures', [AdminController::class, 'cultures'])->name('admin.cultures');

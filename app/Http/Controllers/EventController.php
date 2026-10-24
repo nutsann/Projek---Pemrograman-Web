@@ -12,8 +12,11 @@ class EventController extends Controller
     public function register(Request $req, $eventId)
     {
         $event = EventModel::findOrFail($eventId);
-        if (! $event->is_registration_open) {
+        if (! $event->is_registration_open || $event->status === 'completed' || $event->status === 'cancelled') {
             return back()->with('error', 'Pendaftaran event ditutup.');
+        }
+        if ($event->max_participants && EventRegistration::where('event_id', $eventId)->count() >= $event->max_participants) {
+            return back()->with('error', 'Kuota peserta event sudah penuh.');
         }
         $validated = $req->validate([
             'name' => 'required|string|max:255',
