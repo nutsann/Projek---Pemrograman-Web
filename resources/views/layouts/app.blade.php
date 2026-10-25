@@ -9,7 +9,7 @@
   <style>
     :root { --primary: #105746; --secondary: #C18A32; }
     body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #333; background-color: #FFF7E2; }
-    .navbar { background: #105746 !important; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+     .navbar { background: #105746 !important; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
     .navbar-brand { font-weight: 700; font-size: 1.5rem; color: white !important; }
     .nav-link { color: rgba(255,255,255,0.9) !important; transition: color 0.3s; }
     .nav-link:hover { color: var(--secondary) !important; }

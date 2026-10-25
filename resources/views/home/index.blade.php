@@ -463,6 +463,7 @@
     <a href="{{ route('map') }}" class="btn-lihat-all"><i class="fas fa-map-marked-alt me-2"></i>Buka Peta Interaktif</a>
   </div>
 </section>
+@endsection
 
 @section('scripts')
 <script>
