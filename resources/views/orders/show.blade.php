@@ -167,9 +167,11 @@
             @foreach($order->items as $item)
               <div class="item-list-row">
                 <img
-                  src="{{ $item->product->image ?? 'https://via.placeholder.com/80x80?text=Produk' }}"
-                  class="item-thumb-sm"
+                  src="{{ $item->product && $item->product->image ? asset('storage/' . $item->product->image) : 'https://via.placeholder.com/80x80?text=Produk' }}"
                   alt="{{ $item->product_name }}"
+                  width="80"
+                  height="80"
+                  style="object-fit: cover;"
                 >
                 <div style="flex:1;">
                   <div class="item-title-text">{{ $item->product_name }}</div>

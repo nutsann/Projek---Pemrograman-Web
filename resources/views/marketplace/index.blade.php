@@ -311,7 +311,7 @@
               <div class="product-card-img-wrap">
                 <a href="{{ route('products.detail', $product->slug) }}">
                   <img
-                    src="{{ $product->image ?? 'https://via.placeholder.com/400x250?text=Produk' }}"
+                    src="{{ $product->image ? asset('storage/' . $product->image) : 'https://via.placeholder.com/400x250?text=Produk' }}"
                     class="product-card-img"
                     alt="{{ $product->name }}"
                   >

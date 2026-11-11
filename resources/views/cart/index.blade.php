@@ -284,8 +284,7 @@
             {{-- KIRI: GAMBAR & NAMA --}}
             <div class="cart-item-left">
               <img
-                src="{{ $cart->product->image ?? 'https://via.placeholder.com/150x150?text=Produk' }}"
-                class="cart-item-img"
+                src="{{ $cart->product->image ? asset('storage/' . $cart->product->image) : 'https://via.placeholder.com/150x150?text=Produk' }}"
                 alt="{{ $cart->product->name }}"
               >
               <div>

@@ -9,38 +9,71 @@ use App\Models\Product;
 use App\Models\Umkm;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 
 class UmkmController extends Controller
 {
+    private function getApprovedUmkm()
+    {
+        return Umkm::where('user_id', Auth::id())
+            ->where('status', 'approved')
+            ->firstOrFail();
+    }
+
     public function dashboard()
     {
         $umkm = Umkm::where('user_id', Auth::id())->first();
+
         if (! $umkm) {
-            return redirect()->route('umkm.setup')->with('info', 'Silakan lengkapi data UMKM Anda terlebih dahulu.');
+            return redirect()->route('umkm.setup')
+                ->with('info', 'Silakan lengkapi data UMKM Anda terlebih dahulu.');
         }
+
+        if ($umkm->status !== 'approved') {
+            return redirect()->route('umkm.setup')
+                ->with('error', 'UMKM Anda belum disetujui admin.');
+        }
+
         $stats = [
             'products' => Product::where('umkm_id', $umkm->id)->count(),
-            'orders' => OrderItem::where('umkm_id', $umkm->id)->distinct('order_id')->count('order_id'),
-            'total_sales' => OrderItem::where('umkm_id', $umkm->id)->sum('subtotal'),
-            'pending_orders' => Order::whereHas('items', fn ($q) => $q->where('umkm_id', $umkm->id))->where('status', 'pending')->count(),
-            'processing_orders' => Order::whereHas('items', fn ($q) => $q->where('umkm_id', $umkm->id))->where('status', 'processing')->count(),
+            'orders' => OrderItem::where('umkm_id', $umkm->id)
+                ->distinct('order_id')->count('order_id'),
+            'total_sales' => OrderItem::where('umkm_id', $umkm->id)
+                ->sum('subtotal'),
+            'pending_orders' => OrderItem::where('umkm_id', $umkm->id)
+                ->where('status', 'pending')->count(),
+            'processing_orders' => OrderItem::where('umkm_id', $umkm->id)
+                ->where('status', 'processing')->count(),
         ];
+
         $recent_orders = Order::with('items.product')
             ->whereHas('items', fn ($q) => $q->where('umkm_id', $umkm->id))
             ->latest()
             ->limit(5)
             ->get();
-        $products = Product::where('umkm_id', $umkm->id)->latest()->paginate(10);
 
-        return view('umkm.dashboard', compact('umkm', 'stats', 'recent_orders', 'products'));
+        $products = Product::where('umkm_id', $umkm->id)
+            ->latest()->paginate(10);
+
+        return view('umkm.dashboard', compact(
+            'umkm',
+            'stats',
+            'recent_orders',
+            'products'
+        ));
     }
 
     public function showSetup()
     {
         $umkm = Umkm::where('user_id', Auth::id())->first();
+
         if ($umkm) {
-            return redirect()->route('umkm.dashboard');
+            if ($umkm->status === 'approved') {
+                return redirect()->route('umkm.dashboard');
+            }
+
+            return view('umkm.setup', compact('umkm'));
         }
 
         return view('umkm.setup');
@@ -59,8 +92,8 @@ class UmkmController extends Controller
         ]);
 
         if ($req->hasFile('logo')) {
-            $path = $req->file('logo')->store('umkm_logos', 'public');
-            $validated['logo'] = $path;
+            $validated['logo'] = $req->file('logo')
+                ->store('umkm_logos', 'public');
         }
 
         $validated['user_id'] = Auth::id();
@@ -68,22 +101,24 @@ class UmkmController extends Controller
 
         Umkm::create($validated);
 
-        return redirect()->route('umkm.dashboard')->with('success', 'Data UMKM berhasil disimpan. Menunggu approval admin.');
+        return redirect()->route('umkm.dashboard')
+            ->with('success', 'Data UMKM berhasil disimpan. Menunggu approval admin.');
     }
 
     public function products()
     {
-        $umkm = Umkm::where('user_id', Auth::id())->first();
-        if (! $umkm) {
-            return redirect()->route('umkm.setup')->with('error', 'Setup UMKM dulu.');
-        }
-        $products = Product::where('umkm_id', $umkm->id)->latest()->paginate(10);
+        $umkm = $this->getApprovedUmkm();
+
+        $products = Product::where('umkm_id', $umkm->id)
+            ->latest()->paginate(10);
 
         return view('umkm.products', compact('products', 'umkm'));
     }
 
     public function productCreate()
     {
+        $this->getApprovedUmkm();
+
         $categories = Category::where('type', 'product')->get();
 
         return view('umkm.product-create', compact('categories'));
@@ -91,7 +126,8 @@ class UmkmController extends Controller
 
     public function productStore(Request $req)
     {
-        $umkm = Umkm::where('user_id', Auth::id())->firstOrFail();
+        $umkm = $this->getApprovedUmkm();
+
         $validated = $req->validate([
             'name' => 'required|string|max:255',
             'slug' => 'required|string|max:255|unique:products,slug',
@@ -99,25 +135,33 @@ class UmkmController extends Controller
             'price' => 'required|numeric|min:0',
             'stock' => 'required|integer|min:0',
             'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,svg|max:2048',
-            'category_id' => 'required|exists:categories,id',
+            'category_id' => [
+                'required',
+                'exists:categories,id,type,product',
+            ],
             'status' => 'required|in:active,inactive',
         ]);
 
         if ($req->hasFile('image')) {
-            $path = $req->file('image')->store('products', 'public');
-            $validated['image'] = $path;
+            $validated['image'] = $req->file('image')
+                ->store('products', 'public');
         }
 
         $validated['umkm_id'] = $umkm->id;
+
         Product::create($validated);
 
-        return redirect()->route('umkm.products')->with('success', 'Produk berhasil ditambahkan.');
+        return redirect()->route('umkm.products')
+            ->with('success', 'Produk berhasil ditambahkan.');
     }
 
     public function productEdit($id)
     {
-        $umkm = Umkm::where('user_id', Auth::id())->firstOrFail();
-        $product = Product::where('umkm_id', $umkm->id)->findOrFail($id);
+        $umkm = $this->getApprovedUmkm();
+
+        $product = Product::where('umkm_id', $umkm->id)
+            ->findOrFail($id);
+
         $categories = Category::where('type', 'product')->get();
 
         return view('umkm.product-edit', compact('product', 'categories'));
@@ -125,8 +169,11 @@ class UmkmController extends Controller
 
     public function productUpdate(Request $req, $id)
     {
-        $umkm = Umkm::where('user_id', Auth::id())->firstOrFail();
-        $product = Product::where('umkm_id', $umkm->id)->findOrFail($id);
+        $umkm = $this->getApprovedUmkm();
+
+        $product = Product::where('umkm_id', $umkm->id)
+            ->findOrFail($id);
+
         $validated = $req->validate([
             'name' => 'required|string|max:255',
             'slug' => 'required|string|max:255|unique:products,slug,'.$id,
@@ -134,14 +181,19 @@ class UmkmController extends Controller
             'price' => 'required|numeric|min:0',
             'stock' => 'required|integer|min:0',
             'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,svg|max:2048',
-            'category_id' => 'required|exists:categories,id',
+            'category_id' => [
+                'required',
+                'exists:categories,id,type,product',
+            ],
             'status' => 'required|in:active,inactive',
         ]);
 
         if ($req->hasFile('image')) {
             $oldImage = $product->image;
-            $path = $req->file('image')->store('products', 'public');
-            $validated['image'] = $path;
+
+            $validated['image'] = $req->file('image')
+                ->store('products', 'public');
+
             if ($oldImage && ! filter_var($oldImage, FILTER_VALIDATE_URL)) {
                 Storage::disk('public')->delete($oldImage);
             }
@@ -149,21 +201,31 @@ class UmkmController extends Controller
 
         $product->update($validated);
 
-        return redirect()->route('umkm.products')->with('success', 'Produk berhasil diupdate.');
+        return redirect()->route('umkm.products')
+            ->with('success', 'Produk berhasil diupdate.');
     }
 
     public function productDestroy($id)
     {
-        $umkm = Umkm::where('user_id', Auth::id())->firstOrFail();
-        Product::where('umkm_id', $umkm->id)->where('id', $id)->delete();
+        $umkm = $this->getApprovedUmkm();
 
-        return redirect()->route('umkm.products')->with('success', 'Produk berhasil dihapus.');
+        $product = Product::where('umkm_id', $umkm->id)
+            ->findOrFail($id);
+
+        $product->delete();
+
+        return redirect()->route('umkm.products')
+            ->with('success', 'Produk berhasil dihapus.');
     }
 
     public function orders()
     {
-        $umkm = Umkm::where('user_id', Auth::id())->firstOrFail();
-        $orders = Order::with('items.product.umkm')
+        $umkm = $this->getApprovedUmkm();
+
+        $orders = Order::with([
+            'items' => fn ($q) => $q->where('umkm_id', $umkm->id)
+                ->with('product'),
+        ])
             ->whereHas('items', fn ($q) => $q->where('umkm_id', $umkm->id))
             ->latest()
             ->paginate(10);
@@ -173,13 +235,55 @@ class UmkmController extends Controller
 
     public function orderUpdate(Request $req, OrderItem $orderItem)
     {
-        $umkm = Umkm::where('user_id', Auth::id())->firstOrFail();
-        if ($orderItem->umkm_id !== $umkm->id) {
-            abort(403);
-        }
-        $validated = $req->validate(['status' => 'required|in:pending,processing,completed,cancelled']);
-        $orderItem->order->update(['status' => $validated['status']]);
+        $umkm = $this->getApprovedUmkm();
 
-        return back()->with('success', 'Status pesanan diperbarui.');
+        $validated = $req->validate([
+            'status' => 'required|in:pending,processing,completed,cancelled',
+        ]);
+
+        DB::transaction(function () use ($orderItem, $umkm, $validated) {
+            $item = OrderItem::where('umkm_id', $umkm->id)
+                ->lockForUpdate()
+                ->findOrFail($orderItem->id);
+
+            $order = Order::lockForUpdate()
+                ->findOrFail($item->order_id);
+
+            if ($order->status === 'cancelled') {
+                abort(403, 'Pesanan sudah dibatalkan.');
+            }
+
+            if ($item->status === 'cancelled') {
+                abort(403, 'Item pesanan sudah dibatalkan.');
+            }
+
+            $item->update([
+                'status' => $validated['status'],
+            ]);
+
+            $statuses = $order->items()->pluck('status');
+
+            if ($statuses->every(fn ($status) => $status === 'cancelled')) {
+                $mainStatus = 'cancelled';
+            } elseif ($statuses->every(
+                fn ($status) => in_array($status, ['completed', 'cancelled'], true)
+            )) {
+                $mainStatus = 'completed';
+            } elseif ($statuses->contains('processing')) {
+                $mainStatus = 'processing';
+            } else {
+                $mainStatus = 'pending';
+            }
+
+            $order->update([
+                'status' => $mainStatus,
+            ]);
+        });
+
+        return back()->with(
+            'success',
+            'Status item pesanan berhasil diperbarui.'
+        );
     }
+
 }

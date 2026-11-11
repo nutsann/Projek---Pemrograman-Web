@@ -292,9 +292,11 @@
               @foreach($carts as $cart)
                 <div class="checkout-item-row">
                   <img
-                    src="{{ $cart->product->image ?? 'https://via.placeholder.com/80x80?text=Produk' }}"
-                    class="item-thumb"
+                    src="{{ $cart->product->image ? asset('storage/' . $cart->product->image) : 'https://via.placeholder.com/80x80?text=Produk' }}"
                     alt="{{ $cart->product->name }}"
+                    width="80"
+                    height="80"
+                    style="object-fit: cover;"
                   >
                   <div style="flex:1;">
                     <div class="item-title">{{ $cart->product->name }}</div>

@@ -105,44 +105,200 @@ class AdminController extends Controller
         return view('admin.reviews', compact('reviews'));
     }
 
+    
     public function orderStatusUpdate(Request $req, $id)
     {
-        $validated = $req->validate(['status' => 'required|in:pending,processing,completed,cancelled']);
+        $validated = $req->validate([
+            'status' => 'required|in:pending,processing,completed,cancelled',
+        ]);
 
         try {
             DB::transaction(function () use ($id, $validated) {
-            $order = Order::with('items')->lockForUpdate()->findOrFail($id);
+                $order = Order::with('items')
+                    ->lockForUpdate()
+                    ->findOrFail($id);
 
-            if (in_array($validated['status'], ['processing', 'completed'], true) && $order->payment_status !== 'paid') {
-                throw new \RuntimeException('Pesanan hanya bisa diproses setelah pembayaran lunas.');
-            }
+                $oldStatus = $order->status;
+                $newStatus = $validated['status'];
 
-            $wasCancelled = $order->status === 'cancelled';
-            $willCancel = $validated['status'] === 'cancelled';
-
-            if (! $wasCancelled && $willCancel) {
-                foreach ($order->items as $item) {
-                    $item->product()->lockForUpdate()->first()?->increment('stock', $item->quantity);
+                // Pesanan yang sudah dibatalkan tidak bisa diaktifkan kembali.
+                if ($oldStatus === 'cancelled' && $newStatus !== 'cancelled') {
+                    throw new \RuntimeException(
+                        'Pesanan yang sudah dibatalkan tidak dapat diproses kembali.'
+                    );
                 }
-            }
 
-                $order->update(['status' => $validated['status']]);
+                // Transfer bank dan QRIS harus lunas sebelum diproses.
+                // COD boleh diproses meskipun belum dibayar.
+                if (
+                    in_array($newStatus, ['processing', 'completed'], true) &&
+                    $order->payment_method !== 'cod' &&
+                    $order->payment_status !== 'paid'
+                ) {
+                    throw new \RuntimeException(
+                        'Pesanan transfer bank atau QRIS hanya bisa diproses setelah pembayaran lunas.'
+                    );
+                }
+
+                // Kembalikan stok hanya saat pesanan pertama kali dibatalkan.
+                if ($oldStatus !== 'cancelled' && $newStatus === 'cancelled') {
+                    foreach ($order->items as $item) {
+                        $product = Product::whereKey($item->product_id)
+                            ->lockForUpdate()
+                            ->first();
+
+                        if ($product) {
+                            $product->increment('stock', $item->quantity);
+                        }
+
+                        $item->update([
+                            'status' => 'cancelled',
+                        ]);
+                    }
+                }
+
+                $order->update([
+                    'status' => $newStatus,
+                ]);
+
+                // Sinkronkan status item jika admin mengubah status pesanan.
+                if ($newStatus === 'processing') {
+                    $order->items()
+                        ->whereNotIn('status', ['cancelled'])
+                        ->update(['status' => 'processing']);
+                } elseif ($newStatus === 'completed') {
+                    $order->items()
+                        ->whereNotIn('status', ['cancelled'])
+                        ->update(['status' => 'completed']);
+                }
             });
         } catch (\RuntimeException $e) {
             return back()->with('error', $e->getMessage());
         }
 
-        return back()->with('success', 'Status pesanan diperbarui.');
+        return back()->with('success', 'Status pesanan berhasil diperbarui.');
     }
 
+
+    
     public function paymentStatusUpdate(Request $req, $id)
     {
-        $order = Order::findOrFail($id);
-        $validated = $req->validate(['payment_status' => 'required|in:unpaid,waiting_verification,paid,failed']);
-        $order->update(['payment_status' => $validated['payment_status']]);
-        $order->user->notify(new OrderNotification($order, 'Status pembayaran diperbarui menjadi '.Order::paymentStatusLabel($order->payment_status).'.'));
+        $validated = $req->validate([
+            'payment_status' => 'required|in:unpaid,waiting_verification,paid,failed',
+        ]);
 
-        return back()->with('success', 'Status pembayaran diperbarui.');
+        try {
+            DB::transaction(function () use ($id, $validated) {
+                $order = Order::with('user')
+                    ->lockForUpdate()
+                    ->findOrFail($id);
+
+                $newStatus = $validated['payment_status'];
+                $oldStatus = $order->payment_status;
+
+                // Jangan mengubah pesanan yang sudah dibatalkan.
+                if ($order->status === 'cancelled') {
+                    throw new \RuntimeException(
+                        'Pembayaran pesanan yang dibatalkan tidak dapat diubah.'
+                    );
+                }
+
+                // Pembayaran COD tidak diverifikasi melalui bukti transfer.
+                if (
+                    $order->payment_method === 'cod' &&
+                    $newStatus === 'paid'
+                ) {
+                    throw new \RuntimeException(
+                        'Pembayaran COD dikonfirmasi setelah uang diterima.'
+                    );
+                }
+
+                // Transfer dan QRIS hanya bisa disetujui
+                // setelah pembeli mengunggah bukti pembayaran.
+                if (
+                    $newStatus === 'paid' &&
+                    in_array($order->payment_method, ['bank_transfer', 'qris'], true) &&
+                    ($oldStatus !== 'waiting_verification' || ! $order->payment_proof)
+                ) {
+                    throw new \RuntimeException(
+                        'Pembayaran belum memiliki bukti yang menunggu verifikasi.'
+                    );
+                }
+
+                // Pesanan yang sudah lunas tidak boleh diubah kembali
+                // melalui proses verifikasi biasa.
+                if ($oldStatus === 'paid' && $newStatus !== 'paid') {
+                    throw new \RuntimeException(
+                        'Pembayaran yang sudah lunas tidak dapat diubah.'
+                    );
+                }
+
+                $order->update([
+                    'payment_status' => $newStatus,
+                ]);
+
+                if ($oldStatus !== $newStatus) {
+                    $order->user->notify(
+                        new OrderNotification(
+                            $order,
+                            'Status pembayaran diperbarui menjadi ' .
+                            Order::paymentStatusLabel($newStatus) . '.'
+                        )
+                    );
+                }
+            });
+        } catch (\RuntimeException $e) {
+            return back()->with('error', $e->getMessage());
+        }
+
+        return back()->with('success', 'Status pembayaran berhasil diperbarui.');
+    }
+
+    public function confirmCodPayment($id)
+    {
+        try {
+            DB::transaction(function () use ($id) {
+                $order = Order::with('user')
+                    ->lockForUpdate()
+                    ->findOrFail($id);
+
+                if ($order->payment_method !== 'cod') {
+                    throw new \RuntimeException(
+                        'Konfirmasi ini hanya berlaku untuk pembayaran COD.'
+                    );
+                }
+
+                if ($order->status !== 'completed') {
+                    throw new \RuntimeException(
+                        'Pesanan harus selesai sebelum pembayaran COD dikonfirmasi.'
+                    );
+                }
+
+                if ($order->payment_status !== 'unpaid') {
+                    throw new \RuntimeException(
+                        'Pembayaran COD tidak dalam status yang dapat dikonfirmasi.'
+                    );
+                }
+
+                $order->update([
+                    'payment_status' => 'paid',
+                ]);
+
+                $order->user->notify(
+                    new OrderNotification(
+                        $order,
+                        'Pembayaran COD telah diterima dan dikonfirmasi lunas oleh admin.'
+                    )
+                );
+            });
+        } catch (\RuntimeException $e) {
+            return back()->with('error', $e->getMessage());
+        }
+
+        return back()->with(
+            'success',
+            'Pembayaran COD berhasil dikonfirmasi lunas.'
+        );
     }
 
     // ========== CULTURE CRUD ==========
